@@ -2,7 +2,7 @@
   (:require [clj-http.client :as http]
             [clojure.string :as string]))
 
-(def base-url "http://reddit.com")
+(def base-url "http://www.reddit.com")
 
 (defn get-json
   "Given a reddit URL, constructs an HTTP request for the backing JSON data and
@@ -32,6 +32,46 @@
          second :data :children
          (map :data))))
 
+(defn- parent [comment]
+  (let [[kind id] (string/split (:parent_id comment) #"_")]
+    (when (= kind "t1") id)))
+
+(defn- elide-extra-data [comment]
+  (select-keys comment [:id :parent :replies :body :ups :downs :author]))
+
+(defn- index-by
+  "Given a function `f` and a collection `coll`, returns a map whose values are
+   the items from `coll` and whose keys are the values of `(f item)` for each
+   item. Assumes that `(f item)` will return a different value for each item."
+  [f coll]
+  (reduce #(assoc %1 (f %2) %2) {} coll))
+
+(defn fill-missing-comments
+  "Given a comments map (of the form returned by `reddit-query.core/comments`)
+   and a link ID, locates up to 20 comment IDs for which no data is present in
+   the comments map and retrieves data for the corresponding comments. Returns
+   a copy of the comments map with the retrieved comment data merged in."
+  [comments link-id]
+  (let [missing-ids
+        (->> (vals comments)
+             (mapcat :replies)
+             (remove (partial contains? comments))
+             (take 20)
+             (string/join ","))
+        missing-comments
+        (-> (str base-url "/api/morechildren.json")
+            (http/post {:as :json
+                        :query-params {:children missing-ids
+                                       :link_id (str "t3_" link-id)}})
+            (get-in [:body :jquery 14 3 0]))
+        missing-comments
+        (->> missing-comments
+             (map :data)
+             (map #(assoc % :parent (parent %)))
+             (map elide-extra-data)
+             (index-by :id))]
+    (merge comments missing-comments)))
+
 (defn comments
   "Given a comments thread, returns a map from comment IDs to individual
    comments in the thread. Each comment is represented by a map with the
@@ -49,16 +89,13 @@
    returned comment will itself be present in the returned map."
   [comment-thread]
   (letfn [(replies [comment]
-            (map :data (get-in comment [:replies :data :children])))
-          (parent [comment]
-            (let [[kind id] (string/split (:parent_id comment) #"_")]
-              (when (= kind "t1") id)))]
+            (map :data (get-in comment [:replies :data :children])))]
     (->> (tree-seq (comp seq replies) replies comment-thread)
          (filter :body) ; this is weird, but we get empty comments otherwise
          (map #(assoc % :replies (map :id (replies %))))
          (map #(assoc % :parent (parent %)))
-         (map #(select-keys % [:id :parent :replies :body :ups :downs :author]))
-         (reduce #(assoc %1 (:id %2) %2) {}))))
+         (map elide-extra-data)
+         (index-by :id))))
 
 (defn all-comments
   "Given a link ID, returns a map from comment IDs to individual comments,
