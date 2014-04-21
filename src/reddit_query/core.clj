@@ -1,5 +1,6 @@
 (ns reddit-query.core
-  (:require [clj-http.client :as http]))
+  (:require [clj-http.client :as http]
+            [clojure.string :as string]))
 
 (def base-url "http://reddit.com")
 
@@ -37,6 +38,7 @@
    following keys:
 
      :id      => the comment's unique ID
+     :parent  => the parent comment's unique ID, or nil if top-level
      :replies => a seq of the unique IDs of direct replies to the comment
      :body    => the comment text
      :ups     => the number of upvotes the comment has received
@@ -47,10 +49,14 @@
    returned comment will itself be present in the returned map."
   [comment-thread]
   (letfn [(replies [comment]
-            (map :data (get-in comment [:replies :data :children])))]
+            (map :data (get-in comment [:replies :data :children])))
+          (parent [comment]
+            (let [[kind id] (string/split (:parent_id comment) #"_")]
+              (when (= kind "t1") id)))]
     (->> (tree-seq (comp seq replies) replies comment-thread)
          (map #(assoc % :replies (map :id (replies %))))
-         (map #(select-keys % [:id :replies :body :ups :downs :author]))
+         (map #(assoc % :parent (parent %)))
+         (map #(select-keys % [:id :parent :replies :body :ups :downs :author]))
          (filter :body) ; this is weird, but we get empty comments otherwise
          (reduce #(assoc %1 (:id %2) %2) {}))))
 
