@@ -54,10 +54,10 @@
             (let [[kind id] (string/split (:parent_id comment) #"_")]
               (when (= kind "t1") id)))]
     (->> (tree-seq (comp seq replies) replies comment-thread)
+         (filter :body) ; this is weird, but we get empty comments otherwise
          (map #(assoc % :replies (map :id (replies %))))
          (map #(assoc % :parent (parent %)))
          (map #(select-keys % [:id :parent :replies :body :ups :downs :author]))
-         (filter :body) ; this is weird, but we get empty comments otherwise
          (reduce #(assoc %1 (:id %2) %2) {}))))
 
 (defn all-comments
